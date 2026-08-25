@@ -6,6 +6,7 @@ import ctypes
 import json
 import os
 import sys
+import threading
 import tkinter as tk
 import time
 from dataclasses import dataclass
@@ -290,6 +291,11 @@ class App:
         set_auto(True, str(Path(__file__).resolve()))
 
         self.feed = Feed()
+        self._quote_lock = threading.Lock()
+        self._quote_text = "----"
+        self._quote_err = ""
+        self._feed_thread = threading.Thread(target=self._fetch_loop, daemon=True)
+        self._feed_thread.start()
         self.set_pos()
         self.show()
         self.root.update_idletasks()
@@ -368,18 +374,37 @@ class App:
     def hide(self) -> None:
         self.root.withdraw()
 
+    def _fetch_loop(self) -> None:
+        """后台取价：MT5 关掉后网页请求不能卡住任务栏窗口。"""
+        while self.running:
+            wait = POLL
+            try:
+                quote = self.feed.fetch()
+                text = show_price(quote.price)
+                with self._quote_lock:
+                    self._quote_text = text
+                    self._quote_err = ""
+                if quote.source != "MT5":
+                    wait = 1.0
+            except Exception as exc:
+                with self._quote_lock:
+                    self._quote_err = repr(exc)
+                _log(f"poll_error {exc!r}")
+                wait = 1.0
+            time.sleep(wait)
+
     def _poll(self) -> None:
         if not self.running:
             return
-        try:
-            quote = self.feed.fetch()
-            text = show_price(quote.price)
-            self.price_label.configure(text=text, fg=TEXT)
-            self.tray.update(text, TRAY_COLOR)
-        except Exception as exc:
-            _log(f"poll_error {exc!r}")
+        with self._quote_lock:
+            text = self._quote_text
+            err = self._quote_err
+        if err and text == "----":
             self.price_label.configure(text="----", fg=TEXT)
             self.tray.update("----", TRAY_COLOR)
+        else:
+            self.price_label.configure(text=text, fg=TEXT)
+            self.tray.update(text, TRAY_COLOR)
         self.root.after(int(POLL * 1000), self._poll)
 
     def quit(self) -> None:
@@ -398,6 +423,8 @@ class App:
 # 兼容旧名
 XauWidgetApp = App
 SingleInstance = OneLock
+ConfigStore = CfgStore
+set_autostart = set_auto
 
 
 if __name__ == "__main__":
