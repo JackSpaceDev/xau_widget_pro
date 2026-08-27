@@ -436,7 +436,7 @@ if __name__ == "__main__":
         try:
             ctypes.windll.user32.MessageBoxW(
                 0,
-                "XAU Widget Pro 已在运行。\n请看任务栏右侧金色价格，或托盘图标。",
+                "XAU Widget Pro 已在运行。\n请看任务栏金色价格条，或托盘图标。",
                 APP_NAME,
                 0x40,
             )
