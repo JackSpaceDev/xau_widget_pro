@@ -6,9 +6,9 @@ from main import WIN_H, WIN_W, center_in_bar, in_taskbar_y
 
 
 class TaskbarPosTests(unittest.TestCase):
-    def test_bottom_bar_centers_vertically(self):
+    def test_bottom_bar_centers_horizontally_and_vertically(self):
         x, y = center_in_bar((0, 1032, 1920, 1080), win_w=108, win_h=34)
-        self.assertEqual(x, 8)
+        self.assertEqual(x, (1920 - 108) // 2)
         self.assertEqual(y, 1039)
         self.assertTrue(in_taskbar_y(y, (0, 1032, 1920, 1080), win_h=34))
 

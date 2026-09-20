@@ -137,18 +137,15 @@ def center_in_bar(
     win_w: int = WIN_W,
     win_h: int = WIN_H,
 ) -> tuple[int, int]:
-    """把窗口放进任务栏内部并垂直居中；横条靠左，竖条靠下。"""
+    """把窗口放进任务栏内部：横条水平+垂直居中，竖条水平居中并靠下。"""
     left, top, right, bottom = bar
     bar_w = max(1, right - left)
     bar_h = max(1, bottom - top)
     if bar_w >= bar_h:
-        return left + 8, top + max(0, (bar_h - win_h) // 2)
+        x = left + max(0, (bar_w - win_w) // 2)
+        y = top + max(0, (bar_h - win_h) // 2)
+        return x, y
     return left + max(0, (bar_w - win_w) // 2), bottom - win_h - 8
-
-
-def default_pos() -> tuple[int, int]:
-    """默认贴在主屏任务栏内部并垂直居中。"""
-    return center_in_bar(taskbar_rect())
 
 
 def in_taskbar_y(
@@ -169,6 +166,91 @@ def clamp_pos(x: int, y: int) -> tuple[int, int]:
     min_y = st + 4
     max_y = sb - WIN_H - 4
     return min(max(x, min_x), max_x), min(max(y, min_y), max_y)
+
+
+def _taskbar_button_rect(names: tuple[str, ...]) -> tuple[int, int, int, int] | None:
+    """用 UI Automation 查找任务栏按钮矩形 (left, top, right, bottom)。"""
+    try:
+        import uiautomation as auto
+    except Exception:
+        return None
+    try:
+        tray = auto.PaneControl(ClassName="Shell_TrayWnd")
+        if not tray.Exists(0, 0):
+            return None
+        for name in names:
+            ctrl = tray.Control(Name=name, searchDepth=25)
+            if not ctrl.Exists(0, 0):
+                continue
+            rect = ctrl.BoundingRectangle
+            if rect.width() > 0 and rect.height() > 0:
+                return int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)
+    except Exception as exc:
+        _log(f"taskbar_button_rect error {exc!r}")
+    return None
+
+
+def _weather_widget_rect() -> tuple[int, int, int, int] | None:
+    """天气/小组件按钮（名称常带温度）。"""
+    exact = _taskbar_button_rect(("小组件", "Widgets"))
+    if exact is not None:
+        return exact
+    try:
+        import uiautomation as auto
+
+        tray = auto.PaneControl(ClassName="Shell_TrayWnd")
+        if not tray.Exists(0, 0):
+            return None
+        stack = [tray]
+        while stack:
+            cur = stack.pop()
+            try:
+                name = cur.Name or ""
+                rect = cur.BoundingRectangle
+                if (
+                    cur.ControlTypeName == "ButtonControl"
+                    and rect.width() > 0
+                    and ("°" in name or "小组件" in name or "Widgets" in name)
+                ):
+                    return int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)
+                stack.extend(cur.GetChildren())
+            except Exception:
+                continue
+    except Exception as exc:
+        _log(f"weather_widget_rect error {exc!r}")
+    return None
+
+
+def between_start_and_search_pos(
+    win_w: int = WIN_W,
+    win_h: int = WIN_H,
+) -> tuple[int, int] | None:
+    """放在天气/小组件 与「开始」之间的空档。
+
+    Win11 上「开始」和「搜索」几乎贴死，中间放不下；截图里要的空档是开始键左侧。
+    """
+    start = _taskbar_button_rect(("开始", "Start"))
+    if start is None:
+        return None
+    weather = _weather_widget_rect()
+    left_bound = weather[2] if weather else taskbar_rect()[0]
+    right_bound = start[0]
+    gap = right_bound - left_bound
+    if gap < win_w + 16:
+        x = max(taskbar_rect()[0] + 4, start[0] - win_w - 8)
+    else:
+        x = left_bound + (gap - win_w) // 2
+    bar = taskbar_rect()
+    y = bar[1] + max(0, (bar[3] - bar[1] - win_h) // 2)
+    return clamp_pos(x, y)
+
+
+def default_pos() -> tuple[int, int]:
+    """默认贴在开始键左侧空档；失败则任务栏正中。"""
+    placed = between_start_and_search_pos()
+    if placed is not None:
+        return placed
+    return center_in_bar(taskbar_rect())
 
 
 def show_price(value: float) -> str:
@@ -296,6 +378,9 @@ class App:
         self._quote_err = ""
         self._feed_thread = threading.Thread(target=self._fetch_loop, daemon=True)
         self._feed_thread.start()
+        # 启动时强制贴回任务栏（避免上次拖到桌面后一直浮在壁纸上）
+        self.config.x, self.config.y = default_pos()
+        self.store.save(self.config)
         self.set_pos()
         self.show()
         self.root.update_idletasks()
@@ -304,6 +389,7 @@ class App:
             f"taskbar={taskbar_rect()} scale={SCALE:.2f} size={WIN_W}x{WIN_H}"
         )
         self.root.after(100, self._poll)
+        self.root.after(300, self.snap_home)
         self.root.after(500, self._keep_pos)
         self.root.after(2000, self._keep_pos)
 
